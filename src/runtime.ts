@@ -207,6 +207,7 @@ export class ConversationRuntime {
 			type: "inbound",
 			...buildBaseRecordFields(this.conversation, this.nextRecordId),
 			messageId,
+			replyToMessageId: normalized.replyToMessageId,
 			userId: normalized.userId,
 			userName: normalized.userName,
 			roleIds: normalized.roleIds,
@@ -242,7 +243,11 @@ export class ConversationRuntime {
 		if (!job) return undefined;
 		this.activeJob = job;
 		const triggerRecord = getLatestTriggerRecord(this.records, job);
-		return { job, prompt: this.buildPrompt(job), triggerMessageId: triggerRecord?.messageId };
+		return {
+			job,
+			prompt: this.buildPrompt(job),
+			triggerMessageId: triggerRecord?.replyToMessageId ?? triggerRecord?.messageId,
+		};
 	}
 
 	private buildPrompt(job: PendingJob): string {
@@ -268,7 +273,7 @@ export class ConversationRuntime {
 				...buildBaseRecordFields(this.conversation, this.nextRecordId),
 				messageId: remoteMessageId || nextMessageId(this.conversation.service),
 				text: trimmed,
-				replyToMessageId: triggerRecord?.messageId,
+				replyToMessageId: triggerRecord?.replyToMessageId ?? triggerRecord?.messageId,
 				jobId: job.jobId,
 				attachments: attachmentPaths?.length ? [...attachmentPaths] : undefined,
 			} as const;

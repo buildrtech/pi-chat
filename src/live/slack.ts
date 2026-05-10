@@ -153,6 +153,7 @@ async function toInboundMessageInput(
 	}
 	return {
 		messageId,
+		replyToMessageId: event.thread_ts ?? messageId,
 		userId: event.user || event.username || event.channel || "unknown",
 		userName: event.username,
 		text: normalizeSlackInboundMrkdwn(rawText),

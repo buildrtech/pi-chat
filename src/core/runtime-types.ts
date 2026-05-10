@@ -22,6 +22,7 @@ export interface StoredAttachment {
 
 export interface InboundMessageInput {
 	messageId?: string;
+	replyToMessageId?: string;
 	userId: string;
 	userName?: string;
 	roleIds?: string[];
@@ -44,6 +45,7 @@ export interface ChatRecordBase {
 export interface InboundMessageRecord extends ChatRecordBase {
 	type: "inbound";
 	messageId: string;
+	replyToMessageId?: string;
 	userId: string;
 	userName?: string;
 	roleIds?: string[];
