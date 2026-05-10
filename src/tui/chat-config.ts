@@ -72,6 +72,10 @@ function toRoleToggleItems(
 	return [...items.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
+function isSlackBotId(value: string): boolean {
+	return /^B[A-Z0-9]+$/i.test(value);
+}
+
 function defaultAccess(dm: boolean): AccessPolicy {
 	return { trigger: dm ? "message" : "mention", ignoreBots: true };
 }
@@ -171,6 +175,50 @@ async function configureSecrets(
 	}
 }
 
+async function promptAllowedBotIds(
+	ctx: ExtensionContext,
+	current: string[],
+	snapshot: DiscoverySnapshot | undefined,
+): Promise<string[] | undefined> {
+	let selectedIds = [...current];
+	while (true) {
+		const discovered = toUserToggleItems(snapshot?.users ?? [], selectedIds, { botsOnly: true });
+		const choice = await selectItem(ctx, "Allowed bots", [
+			{
+				value: "select",
+				label: `Select discovered/stored bots: ${selectedIds.length}`,
+				description: `${discovered.length} available`,
+			},
+			{ value: "manual", label: "Add bot ID manually", description: "Slack bot_id, e.g. B0B3PR8SQN4" },
+			{ value: "clear", label: "Clear allowed bots", description: `${selectedIds.length} currently allowed` },
+			{ value: "save", label: "Save" },
+			{ value: "cancel", label: "Cancel" },
+		]);
+		if (!choice || choice === "cancel") return undefined;
+		if (choice === "save") return selectedIds;
+		if (choice === "select") {
+			if (discovered.length === 0) {
+				await showNotice(ctx, "No bot IDs", "Add a Slack bot_id manually first, then select it here.", "warning");
+				continue;
+			}
+			const toggled = await toggleItems(ctx, "Allowed bots", discovered, selectedIds);
+			if (toggled) selectedIds = toggled;
+			continue;
+		}
+		if (choice === "manual") {
+			const botId = (await ctx.ui.input("Slack bot_id", ""))?.trim();
+			if (!botId) continue;
+			if (!isSlackBotId(botId)) {
+				await showNotice(ctx, "Invalid bot ID", "Slack bot IDs usually start with B, e.g. B0B3PR8SQN4.", "error");
+				continue;
+			}
+			if (!selectedIds.includes(botId)) selectedIds = [...selectedIds, botId];
+			continue;
+		}
+		if (choice === "clear") selectedIds = [];
+	}
+}
+
 async function promptAccessPolicy(
 	ctx: ExtensionContext,
 	current: AccessPolicy,
@@ -203,12 +251,7 @@ async function promptAccessPolicy(
 			continue;
 		}
 		if (choice === "allowedBots") {
-			const items = toUserToggleItems(snapshot?.users ?? [], policy.allowedBotIds ?? [], { botsOnly: true });
-			if (items.length === 0) {
-				await showNotice(ctx, "No discovered bots", "No discovered bot users available for this account.", "warning");
-				continue;
-			}
-			const selected = await toggleItems(ctx, "Allowed bots", items, policy.allowedBotIds ?? []);
+			const selected = await promptAllowedBotIds(ctx, policy.allowedBotIds ?? [], snapshot);
 			if (selected) policy = { ...policy, allowedBotIds: selected.length > 0 ? selected : undefined };
 			continue;
 		}
