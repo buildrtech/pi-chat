@@ -35,6 +35,7 @@ function mergeAccess(...policies: Array<AccessPolicy | undefined>): AccessPolicy
 		if (policy.trigger !== undefined) merged.trigger = policy.trigger;
 		if (policy.ignoreBots !== undefined) merged.ignoreBots = policy.ignoreBots;
 		if (policy.allowedUserIds !== undefined) merged.allowedUserIds = [...policy.allowedUserIds];
+		if (policy.allowedBotIds !== undefined) merged.allowedBotIds = [...policy.allowedBotIds];
 		if (policy.allowedRoleIds !== undefined) merged.allowedRoleIds = [...policy.allowedRoleIds];
 	}
 	return merged;

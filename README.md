@@ -71,6 +71,8 @@ pi -e /path/to/pi-chat
 
 Slack uses Socket Mode, so no public webhook URL is required. The manifest includes these bot scopes: `app_mentions:read`, `channels:history`, `channels:read`, `chat:write`, `files:read`, `files:write`, `groups:history`, `groups:read`, `im:history`, `im:read`, `mpim:history`, `mpim:read`, `team:read`, and `users:read`.
 
+Bot-authored Slack messages are ignored by default to prevent self-trigger loops. To intentionally respond to a trusted bot/app, edit the channel access policy in `/chat-config` and add that Slack `bot_id` under **Allowed bots**; only those bot IDs bypass the bot filter.
+
 ---
 
 ## Commands

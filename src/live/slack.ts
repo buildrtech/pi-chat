@@ -74,6 +74,7 @@ interface SlackMessageEvent {
 	user?: string;
 	username?: string;
 	bot_id?: string;
+	app_id?: string;
 	text?: string;
 	thread_ts?: string;
 	subtype?: string;
@@ -110,13 +111,17 @@ async function withSlackClient(account: SlackAccountConfig): Promise<{
 	return { web, socket, botUserId };
 }
 
-function shouldIgnoreSlackEvent(event: SlackMessageEvent, account: SlackAccountConfig, botUserId: string): boolean {
+function shouldIgnoreSlackEvent(
+	event: SlackMessageEvent,
+	conversation: ResolvedConversation,
+	botUserId: string,
+): boolean {
 	if (event.type !== "message" && event.type !== "app_mention") return true;
 	if (!event.channel || !event.ts) return true;
-	if (event.subtype && event.subtype !== "file_share") return true;
 	if (event.user && event.user === botUserId) return true;
-	if (event.user && event.user === account.botUserId) return true;
-	if (event.bot_id) return true;
+	if (event.user && event.user === (conversation.account as SlackAccountConfig).botUserId) return true;
+	if (event.bot_id && !conversation.access.allowedBotIds?.includes(event.bot_id)) return true;
+	if (event.subtype && event.subtype !== "file_share" && !event.bot_id) return true;
 	return false;
 }
 
@@ -141,7 +146,7 @@ async function toInboundMessageInput(
 	event: SlackMessageEvent,
 ): Promise<InboundMessageInput | undefined> {
 	if (event.channel !== conversation.channel.id) return undefined;
-	if (shouldIgnoreSlackEvent(event, account, botUserId)) return undefined;
+	if (shouldIgnoreSlackEvent(event, conversation, botUserId)) return undefined;
 	const messageId = event.ts ?? event.event_ts;
 	if (!messageId) return undefined;
 	const rawText = event.text || "";
@@ -155,6 +160,7 @@ async function toInboundMessageInput(
 		messageId,
 		replyToMessageId: event.thread_ts ?? messageId,
 		userId: event.user || event.username || event.channel || "unknown",
+		botId: event.bot_id,
 		userName: event.username,
 		text: normalizeSlackInboundMrkdwn(rawText),
 		mentionedBot: event.type === "app_mention" || textMentionsBot(rawText, account.botUsername, botUserId),

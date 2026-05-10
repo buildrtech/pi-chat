@@ -19,6 +19,7 @@ export interface DiscoveredUser {
 	name: string;
 	displayName?: string;
 	isBot?: boolean;
+	botId?: string;
 }
 
 export interface DiscoveredRole {

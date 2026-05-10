@@ -6,6 +6,7 @@ export interface AccessPolicy {
 	trigger?: TriggerMode;
 	ignoreBots?: boolean;
 	allowedUserIds?: string[];
+	allowedBotIds?: string[];
 	allowedRoleIds?: string[];
 }
 

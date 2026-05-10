@@ -63,6 +63,7 @@ interface SlackUser {
 	name?: string;
 	real_name?: string;
 	profile?: {
+		bot_id?: string;
 		display_name?: string;
 		real_name?: string;
 	};
@@ -100,6 +101,7 @@ async function listSlackUsers(client: SlackClient): Promise<DiscoveredUser[]> {
 				name,
 				displayName,
 				isBot: user.is_bot,
+				botId: user.profile?.bot_id,
 			});
 		}
 		cursor = result.response_metadata?.next_cursor || undefined;

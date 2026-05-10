@@ -41,13 +41,21 @@ function accountDescription(account: ChatAccountConfig, snapshot: DiscoverySnaps
 function toUserToggleItems(
 	users: DiscoveredUser[],
 	selectedIds: string[] = [],
+	options?: { botsOnly?: boolean },
 ): Array<{ id: string; label: string; description?: string }> {
 	const items = new Map<string, { id: string; label: string; description?: string }>();
 	for (const user of users) {
-		items.set(user.id, {
-			id: user.id,
+		if (options?.botsOnly && !user.isBot) continue;
+		const id = options?.botsOnly ? (user.botId ?? user.id) : user.id;
+		items.set(id, {
+			id,
 			label: user.displayName || user.name,
-			description: user.displayName && user.displayName !== user.name ? user.name : undefined,
+			description: [
+				user.displayName && user.displayName !== user.name ? user.name : undefined,
+				user.isBot ? `bot ${user.botId ?? user.id}` : undefined,
+			]
+				.filter(Boolean)
+				.join(" • "),
 		});
 	}
 	for (const id of selectedIds) if (!items.has(id)) items.set(id, { id, label: id, description: "stored id" });
@@ -174,6 +182,7 @@ async function promptAccessPolicy(
 		const choice = await selectItem(ctx, "Access policy", [
 			{ value: "trigger", label: `Trigger: ${policy.trigger ?? (dm ? "message" : "mention")}` },
 			{ value: "bots", label: `Ignore bots: ${(policy.ignoreBots ?? true) ? "yes" : "no"}` },
+			{ value: "allowedBots", label: `Allowed bots: ${policy.allowedBotIds?.length ?? 0}` },
 			{ value: "users", label: `Allowed users: ${policy.allowedUserIds?.length ?? 0}` },
 			{ value: "roles", label: `Allowed roles: ${policy.allowedRoleIds?.length ?? 0}` },
 			{ value: "save", label: "Save" },
@@ -191,6 +200,16 @@ async function promptAccessPolicy(
 				},
 			]);
 			if (selected) policy = { ...policy, trigger: selected as AccessPolicy["trigger"] };
+			continue;
+		}
+		if (choice === "allowedBots") {
+			const items = toUserToggleItems(snapshot?.users ?? [], policy.allowedBotIds ?? [], { botsOnly: true });
+			if (items.length === 0) {
+				await showNotice(ctx, "No discovered bots", "No discovered bot users available for this account.", "warning");
+				continue;
+			}
+			const selected = await toggleItems(ctx, "Allowed bots", items, policy.allowedBotIds ?? []);
+			if (selected) policy = { ...policy, allowedBotIds: selected.length > 0 ? selected : undefined };
 			continue;
 		}
 		if (choice === "bots") {
