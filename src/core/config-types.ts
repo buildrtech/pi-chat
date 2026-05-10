@@ -1,4 +1,4 @@
-export type ChatService = "telegram" | "discord";
+export type ChatService = "telegram" | "discord" | "slack";
 
 export type TriggerMode = "mention" | "message";
 
@@ -6,6 +6,7 @@ export interface AccessPolicy {
 	trigger?: TriggerMode;
 	ignoreBots?: boolean;
 	allowedUserIds?: string[];
+	allowedBotIds?: string[];
 	allowedRoleIds?: string[];
 }
 
@@ -51,7 +52,17 @@ export interface DiscordAccountConfig extends BaseAccountConfig {
 	botUsername?: string;
 }
 
-export type ChatAccountConfig = TelegramAccountConfig | DiscordAccountConfig;
+export interface SlackAccountConfig extends BaseAccountConfig {
+	service: "slack";
+	botToken: string;
+	appToken: string;
+	teamId: string;
+	teamName?: string;
+	botUserId?: string;
+	botUsername?: string;
+}
+
+export type ChatAccountConfig = TelegramAccountConfig | DiscordAccountConfig | SlackAccountConfig;
 
 export interface ChatConfig {
 	botName?: string;

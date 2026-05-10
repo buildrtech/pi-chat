@@ -14,6 +14,7 @@ import type {
 	DiscordAccountConfig,
 	GondolinConfig,
 	GondolinSecretConfig,
+	SlackAccountConfig,
 	TelegramAccountConfig,
 } from "../core/config-types.js";
 import type { DiscoveredChannel, DiscoveredRole, DiscoveredUser, DiscoverySnapshot } from "../core/discovery-types.js";
@@ -22,12 +23,14 @@ import { loadDiscoverySnapshot } from "../discovery-store.js";
 import { refreshAccountSnapshot, updateAccountIdentityFromSnapshot } from "../services/index.js";
 import { selectItem, showNotice, toggleItems } from "./dialogs.js";
 import { createDiscordAccountWithGuidedSetup } from "./discord-setup.js";
+import { createSlackAccountWithGuidedSetup } from "./slack-setup.js";
 import { addTelegramObservedTargetToAccount, createTelegramAccountWithGuidedSetup } from "./telegram-setup.js";
 
 function accountDescription(account: ChatAccountConfig, snapshot: DiscoverySnapshot | undefined): string {
 	const parts: string[] = [account.service];
 	if (account.name) parts.push(account.name);
 	if (account.service === "discord") parts.push(account.serverName);
+	else if (account.service === "slack" && account.teamName) parts.push(account.teamName);
 	else if (snapshot?.identity.userName) parts.push(`@${snapshot.identity.userName}`);
 	parts.push(
 		`${Object.keys(account.channels).length} configured channel${Object.keys(account.channels).length === 1 ? "" : "s"}`,
@@ -38,13 +41,21 @@ function accountDescription(account: ChatAccountConfig, snapshot: DiscoverySnaps
 function toUserToggleItems(
 	users: DiscoveredUser[],
 	selectedIds: string[] = [],
+	options?: { botsOnly?: boolean },
 ): Array<{ id: string; label: string; description?: string }> {
 	const items = new Map<string, { id: string; label: string; description?: string }>();
 	for (const user of users) {
-		items.set(user.id, {
-			id: user.id,
+		if (options?.botsOnly && !user.isBot) continue;
+		const id = options?.botsOnly ? (user.botId ?? user.id) : user.id;
+		items.set(id, {
+			id,
 			label: user.displayName || user.name,
-			description: user.displayName && user.displayName !== user.name ? user.name : undefined,
+			description: [
+				user.displayName && user.displayName !== user.name ? user.name : undefined,
+				user.isBot ? `bot ${user.botId ?? user.id}` : undefined,
+			]
+				.filter(Boolean)
+				.join(" • "),
 		});
 	}
 	for (const id of selectedIds) if (!items.has(id)) items.set(id, { id, label: id, description: "stored id" });
@@ -59,6 +70,10 @@ function toRoleToggleItems(
 	for (const role of roles) items.set(role.id, { id: role.id, label: role.name });
 	for (const id of selectedIds) if (!items.has(id)) items.set(id, { id, label: id, description: "stored id" });
 	return [...items.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function isSlackBotId(value: string): boolean {
+	return /^B[A-Z0-9]+$/i.test(value);
 }
 
 function defaultAccess(dm: boolean): AccessPolicy {
@@ -160,6 +175,50 @@ async function configureSecrets(
 	}
 }
 
+async function promptAllowedBotIds(
+	ctx: ExtensionContext,
+	current: string[],
+	snapshot: DiscoverySnapshot | undefined,
+): Promise<string[] | undefined> {
+	let selectedIds = [...current];
+	while (true) {
+		const discovered = toUserToggleItems(snapshot?.users ?? [], selectedIds, { botsOnly: true });
+		const choice = await selectItem(ctx, "Allowed bots", [
+			{
+				value: "select",
+				label: `Select discovered/stored bots: ${selectedIds.length}`,
+				description: `${discovered.length} available`,
+			},
+			{ value: "manual", label: "Add bot ID manually", description: "Slack bot_id, e.g. B0B3PR8SQN4" },
+			{ value: "clear", label: "Clear allowed bots", description: `${selectedIds.length} currently allowed` },
+			{ value: "save", label: "Save" },
+			{ value: "cancel", label: "Cancel" },
+		]);
+		if (!choice || choice === "cancel") return undefined;
+		if (choice === "save") return selectedIds;
+		if (choice === "select") {
+			if (discovered.length === 0) {
+				await showNotice(ctx, "No bot IDs", "Add a Slack bot_id manually first, then select it here.", "warning");
+				continue;
+			}
+			const toggled = await toggleItems(ctx, "Allowed bots", discovered, selectedIds);
+			if (toggled) selectedIds = toggled;
+			continue;
+		}
+		if (choice === "manual") {
+			const botId = (await ctx.ui.input("Slack bot_id", ""))?.trim();
+			if (!botId) continue;
+			if (!isSlackBotId(botId)) {
+				await showNotice(ctx, "Invalid bot ID", "Slack bot IDs usually start with B, e.g. B0B3PR8SQN4.", "error");
+				continue;
+			}
+			if (!selectedIds.includes(botId)) selectedIds = [...selectedIds, botId];
+			continue;
+		}
+		if (choice === "clear") selectedIds = [];
+	}
+}
+
 async function promptAccessPolicy(
 	ctx: ExtensionContext,
 	current: AccessPolicy,
@@ -171,6 +230,7 @@ async function promptAccessPolicy(
 		const choice = await selectItem(ctx, "Access policy", [
 			{ value: "trigger", label: `Trigger: ${policy.trigger ?? (dm ? "message" : "mention")}` },
 			{ value: "bots", label: `Ignore bots: ${(policy.ignoreBots ?? true) ? "yes" : "no"}` },
+			{ value: "allowedBots", label: `Allowed bots: ${policy.allowedBotIds?.length ?? 0}` },
 			{ value: "users", label: `Allowed users: ${policy.allowedUserIds?.length ?? 0}` },
 			{ value: "roles", label: `Allowed roles: ${policy.allowedRoleIds?.length ?? 0}` },
 			{ value: "save", label: "Save" },
@@ -188,6 +248,11 @@ async function promptAccessPolicy(
 				},
 			]);
 			if (selected) policy = { ...policy, trigger: selected as AccessPolicy["trigger"] };
+			continue;
+		}
+		if (choice === "allowedBots") {
+			const selected = await promptAllowedBotIds(ctx, policy.allowedBotIds ?? [], snapshot);
+			if (selected) policy = { ...policy, allowedBotIds: selected.length > 0 ? selected : undefined };
 			continue;
 		}
 		if (choice === "bots") {
@@ -364,6 +429,67 @@ async function configureDiscordAccount(ctx: ExtensionContext, accountId: string)
 	}
 }
 
+async function configureSlackAccount(ctx: ExtensionContext, accountId: string): Promise<void> {
+	while (true) {
+		const config = await loadChatConfig();
+		const account = config.accounts[accountId] as SlackAccountConfig | undefined;
+		if (!account || account.service !== "slack") return;
+		const snapshot = await loadDiscoverySnapshot(accountId);
+		const configuredIds = new Set(Object.values(account.channels).map((channel) => channel.id));
+		const channelChoices = (snapshot?.channels ?? [])
+			.map((channel) => ({
+				value: channel.id,
+				label: `${configuredIds.has(channel.id) ? "●" : "○"} ${channel.name}`,
+				description: configuredIds.has(channel.id) ? "configured" : channel.dm ? "dm/mpim" : undefined,
+			}))
+			.sort((a, b) => {
+				const aConfigured = a.label.startsWith("●") ? 0 : 1;
+				const bConfigured = b.label.startsWith("●") ? 0 : 1;
+				return aConfigured - bConfigured || a.label.localeCompare(b.label);
+			});
+		const choice = await selectItem(ctx, `${accountId} (${account.teamName ?? account.teamId})`, [
+			{ value: "secrets", label: "Secrets", description: secretSummary(account.gondolin) },
+			{ value: "delete", label: "Delete account", description: "Remove account and all configured channels" },
+			{
+				value: "refresh",
+				label: "Refresh conversations",
+				description: snapshot?.fetchedAt ? `Last fetched ${snapshot.fetchedAt}` : "No snapshot yet",
+			},
+			...channelChoices,
+			{ value: "back", label: "Back" },
+		]);
+		if (!choice || choice === "back") return;
+		if (choice === "secrets") {
+			await configureSecrets(ctx, `${accountId} secrets`, account.gondolin, async (next) => {
+				account.gondolin = next;
+				config.accounts[accountId] = account;
+				await saveChatConfig(config);
+			});
+			continue;
+		}
+		if (choice === "delete") {
+			const ok = await ctx.ui.confirm("Delete account", `Delete ${accountId} and all configured channels?`);
+			if (!ok) continue;
+			delete config.accounts[accountId];
+			await saveChatConfig(config);
+			await removeAccountStorage(accountId, ctx.cwd);
+			await showNotice(ctx, "Account deleted", `Deleted ${accountId}`, "info");
+			return;
+		}
+		if (choice === "refresh") {
+			const fresh = await refreshAccountSnapshot(accountId, account);
+			config.accounts[accountId] = updateAccountIdentityFromSnapshot(account, fresh);
+			await saveChatConfig(config);
+			if ((fresh.warnings?.length ?? 0) > 0) {
+				await showNotice(ctx, "Refresh warnings", (fresh.warnings ?? []).join("\n"), "warning");
+			}
+			continue;
+		}
+		const selectedChannel = snapshot?.channels.find((channel) => channel.id === choice);
+		if (selectedChannel) await configureDiscoveredChannel(ctx, config, accountId, selectedChannel, snapshot);
+	}
+}
+
 async function configureTelegramAccount(ctx: ExtensionContext, accountId: string): Promise<void> {
 	while (true) {
 		const config = await loadChatConfig();
@@ -424,6 +550,7 @@ async function configureAccount(ctx: ExtensionContext, accountId: string): Promi
 	const account = config.accounts[accountId];
 	if (!account) return;
 	if (account.service === "discord") return configureDiscordAccount(ctx, accountId);
+	if (account.service === "slack") return configureSlackAccount(ctx, accountId);
 	if (account.service === "telegram") return configureTelegramAccount(ctx, accountId);
 }
 
@@ -446,7 +573,7 @@ export async function runChatConfigUI(ctx: ExtensionContext): Promise<void> {
 				label: accountId,
 				description: accountDescription(config.accounts[accountId], snapshot),
 			})),
-			{ value: "__create__", label: "+ Create account", description: "Create a Telegram or Discord account" },
+			{ value: "__create__", label: "+ Create account", description: "Create a Telegram, Discord, or Slack account" },
 		]);
 		if (!choice) return;
 		if (choice === "__secrets__") {
@@ -460,10 +587,16 @@ export async function runChatConfigUI(ctx: ExtensionContext): Promise<void> {
 			const serviceChoice = await selectItem(ctx, "Create account", [
 				{ value: "telegram", label: "Telegram" },
 				{ value: "discord", label: "Discord" },
+				{ value: "slack", label: "Slack" },
 			]);
 			if (!serviceChoice) continue;
 			if (serviceChoice === "telegram") {
 				const accountId = await createTelegramAccountWithGuidedSetup(ctx, config);
+				if (accountId) await configureAccount(ctx, accountId);
+				continue;
+			}
+			if (serviceChoice === "slack") {
+				const accountId = await createSlackAccountWithGuidedSetup(ctx, config);
 				if (accountId) await configureAccount(ctx, accountId);
 				continue;
 			}

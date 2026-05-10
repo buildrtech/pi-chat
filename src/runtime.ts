@@ -41,9 +41,8 @@ function toGuestDisplayPath(conversation: ResolvedConversation, localPath: strin
 
 function formatTranscriptRecord(conversation: ResolvedConversation, record: ChatLogRecord): string[] {
 	if (record.type !== "inbound") return [];
-	const lines = [
-		`- [${record.timestamp}] [uid:${record.userId}] ${record.userName ?? "unknown"}: ${record.text || "(no text)"}`,
-	];
+	const uid = record.botId ? `${record.userId}|bot:${record.botId}` : record.userId;
+	const lines = [`- [${record.timestamp}] [uid:${uid}] ${record.userName ?? "unknown"}: ${record.text || "(no text)"}`];
 	if (record.attachments.length > 0) {
 		lines.push("  attachments:");
 		for (const attachment of record.attachments)
@@ -126,9 +125,10 @@ export class ConversationRuntime {
 		return last;
 	}
 
-	private isAllowedInput(message: Pick<InboundMessageInput, "userId" | "roleIds" | "isBot">): boolean {
+	private isAllowedInput(message: Pick<InboundMessageInput, "userId" | "botId" | "roleIds" | "isBot">): boolean {
 		const access = this.conversation.access;
-		if ((message.isBot ?? false) && (access.ignoreBots ?? true)) return false;
+		const allowedBot = message.botId ? access.allowedBotIds?.includes(message.botId) : false;
+		if ((message.isBot ?? false) && (access.ignoreBots ?? true) && !allowedBot) return false;
 		if (access.allowedUserIds?.length && !access.allowedUserIds.includes(message.userId)) return false;
 		if (access.allowedRoleIds?.length) {
 			const roleIds = message.roleIds ?? [];
@@ -207,7 +207,9 @@ export class ConversationRuntime {
 			type: "inbound",
 			...buildBaseRecordFields(this.conversation, this.nextRecordId),
 			messageId,
+			replyToMessageId: normalized.replyToMessageId,
 			userId: normalized.userId,
+			botId: normalized.botId,
 			userName: normalized.userName,
 			roleIds: normalized.roleIds,
 			text: normalized.text,
@@ -242,7 +244,11 @@ export class ConversationRuntime {
 		if (!job) return undefined;
 		this.activeJob = job;
 		const triggerRecord = getLatestTriggerRecord(this.records, job);
-		return { job, prompt: this.buildPrompt(job), triggerMessageId: triggerRecord?.messageId };
+		return {
+			job,
+			prompt: this.buildPrompt(job),
+			triggerMessageId: triggerRecord?.replyToMessageId ?? triggerRecord?.messageId,
+		};
 	}
 
 	private buildPrompt(job: PendingJob): string {
@@ -268,7 +274,7 @@ export class ConversationRuntime {
 				...buildBaseRecordFields(this.conversation, this.nextRecordId),
 				messageId: remoteMessageId || nextMessageId(this.conversation.service),
 				text: trimmed,
-				replyToMessageId: triggerRecord?.messageId,
+				replyToMessageId: triggerRecord?.replyToMessageId ?? triggerRecord?.messageId,
 				jobId: job.jobId,
 				attachments: attachmentPaths?.length ? [...attachmentPaths] : undefined,
 			} as const;
